@@ -18,37 +18,39 @@ import os
 import urllib.request
 import numpy as np
 
-# 尝试导入 PIL 库用于中文绘制
-try:
-    from PIL import Image, ImageDraw, ImageFont
-    PIL_AVAILABLE = True
-except ImportError:
-    PIL_AVAILABLE = False
-    print('警告：未安装 PIL 库，中文显示可能不正常，请安装 Pillow')
-
 # MediaPipe 手部关键点检测模型的下载地址
 MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task'
 # 模型文件本地存储路径（与当前脚本同级目录）
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'hand_landmarker.task')
 
+# 尝试导入 PIL 库用于中文绘制
+try:
+    from PIL import Image, ImageDraw, ImageFont  # noqa: F401
+    _PIL_AVAILABLE = True
+except ImportError:
+    _PIL_AVAILABLE = False
+    print('警告：未安装 PIL 库，中文显示可能不正常，请安装 Pillow')
+
 
 def put_chinese_text(frame, text, pos, font_size=24, color=(0, 255, 0)):
     """
     在图像帧上绘制中文文本。
-    
+
     使用 PIL 库绘制中文，避免 OpenCV 默认字体不支持中文的问题。
-    
+
     参数:
         frame: OpenCV BGR 格式的图像帧（原地修改）
         text: 要绘制的中文文本
         pos: 文本左上角坐标 (x, y)
         font_size: 字体大小，默认 24
         color: 文本颜色 (B, G, R)，默认绿色
-    
+
     返回:
         修改后的帧
     """
-    if PIL_AVAILABLE:
+    if _PIL_AVAILABLE:
+        from PIL import Image as _Image, ImageDraw as _ImageDraw, ImageFont as _ImageFont
+
         # 获取系统默认中文字体路径
         font_path = None
         # 尝试常见的中文字体路径
@@ -59,37 +61,37 @@ def put_chinese_text(frame, text, pos, font_size=24, color=(0, 255, 0)):
             '/Library/Fonts/Songti.ttc',             # macOS 宋体
             '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',  # Linux 文泉驿
         ]
-        
+
         for candidate in font_candidates:
             if os.path.exists(candidate):
                 font_path = candidate
                 break
-        
+
         try:
             if font_path:
-                font = ImageFont.truetype(font_path, font_size)
+                font = _ImageFont.truetype(font_path, font_size)
             else:
                 # 如果找不到字体，使用默认字体
-                font = ImageFont.load_default()
-            
+                font = _ImageFont.load_default()
+
             # OpenCV BGR → PIL RGB
-            img_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            draw = ImageDraw.Draw(img_pil)
-            
+            img_pil = _Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            draw = _ImageDraw.Draw(img_pil)
+
             # 绘制中文文本
             draw.text(pos, text, font=font, fill=(color[2], color[1], color[0]))
-            
+
             # PIL RGB → OpenCV BGR
             frame[:] = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
-        except Exception as e:
-            # 如果 PIL 绘制失败，回退到 OpenCV（显示乱码但程序不崩溃）
-            cv2.putText(frame, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 
+        except Exception:
+            # 如果 PIL 绘制失败，回退到 OpenCV
+            cv2.putText(frame, text, pos, cv2.FONT_HERSHEY_SIMPLEX,
                         font_size / 24, color, 2, cv2.LINE_AA)
     else:
         # 没有 PIL，直接使用 OpenCV（中文会显示为方框或问号）
-        cv2.putText(frame, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 
+        cv2.putText(frame, text, pos, cv2.FONT_HERSHEY_SIMPLEX,
                     font_size / 24, color, 2, cv2.LINE_AA)
-    
+
     return frame
 
 
