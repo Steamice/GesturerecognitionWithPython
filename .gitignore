@@ -219,3 +219,8 @@ __marimo__/
 
 # MediaPipe model files
 *.task
+
+# Skills management files (local agents only)
+skills-lock.json
+.skills/
+skills/
