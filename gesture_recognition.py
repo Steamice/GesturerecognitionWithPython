@@ -17,6 +17,7 @@ from mediapipe.tasks.python.vision.hand_landmarker import (
 import os
 import urllib.request
 import numpy as np
+import time
 
 # MediaPipe 手部关键点检测模型的下载地址
 MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task'
@@ -150,6 +151,12 @@ class GestureRecognizer:
             'point_up': '食指指上'
         }
 
+        # 火球效果相关参数
+        self.fireball_enabled = True  # 是否启用火球效果
+        self.fireball_size = 40       # 火球基础大小
+        self.fireball_particles = []  # 火球粒子列表
+        self.last_time = time.time()  # 用于控制粒子生成速率
+
     def detect_gesture(self, hand_landmarks):
         """
         根据 21 个手部关键点坐标判断当前手势类型。
@@ -261,6 +268,95 @@ class GestureRecognizer:
             cx, cy = int(lm.x * width), int(lm.y * height)
             cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
 
+    def _draw_fireball(self, frame, hand_landmarks):
+        """
+        在手掌中心绘制火球效果。
+
+        火球由多层渐变圆形和动态粒子组成，模拟火焰效果。
+
+        参数:
+            frame: OpenCV BGR 格式的图像帧（原地修改）
+            hand_landmarks: 归一化坐标的关键点列表
+        """
+        if not self.fireball_enabled:
+            return
+
+        height, width = frame.shape[:2]
+
+        # 计算手掌中心位置（使用掌心关键点或多个指尖的平均值）
+        # 取食指、中指、无名指、小指的指尖坐标计算中心
+        finger_tips = [
+            hand_landmarks[HandLandmark.INDEX_FINGER_TIP],
+            hand_landmarks[HandLandmark.MIDDLE_FINGER_TIP],
+            hand_landmarks[HandLandmark.RING_FINGER_TIP],
+            hand_landmarks[HandLandmark.PINKY_TIP]
+        ]
+        center_x = sum(tip.x for tip in finger_tips) / 4
+        center_y = sum(tip.y for tip in finger_tips) / 4
+
+        # 添加手腕位置作为参考，使火球更靠近手掌中心
+        wrist = hand_landmarks[HandLandmark.WRIST]
+        center_x = (center_x * 3 + wrist.x) / 4
+        center_y = (center_y * 3 + wrist.y) / 4
+
+        # 转换为像素坐标
+        cx = int(center_x * width)
+        cy = int(center_y * height)
+
+        # 动态大小，根据时间轻微变化模拟火焰跳动
+        size = self.fireball_size + int(5 * np.sin(time.time() * 10))
+
+        # 生成火焰粒子
+        current_time = time.time()
+        if current_time - self.last_time > 0.05:  # 每50ms生成一个粒子
+            self.last_time = current_time
+            self.fireball_particles.append({
+                'x': cx + np.random.randint(-10, 10),
+                'y': cy + np.random.randint(-10, 10),
+                'size': np.random.randint(5, 15),
+                'speed_y': -np.random.uniform(2, 5),
+                'speed_x': np.random.uniform(-2, 2),
+                'alpha': 1.0,
+                'decay': np.random.uniform(0.02, 0.05)
+            })
+
+        # 更新和绘制粒子
+        new_particles = []
+        for particle in self.fireball_particles:
+            particle['x'] += particle['speed_x']
+            particle['y'] += particle['speed_y']
+            particle['alpha'] -= particle['decay']
+            particle['size'] *= 0.98  # 粒子逐渐变小
+
+            if particle['alpha'] > 0:
+                # 根据粒子大小决定颜色（大粒子偏白，小粒子偏红）
+                if particle['size'] > 10:
+                    color = (0, 200, 255)  # 白色核心
+                elif particle['size'] > 5:
+                    color = (0, 100, 255)  # 黄色
+                else:
+                    color = (0, 0, 255)    # 红色
+
+                cv2.circle(frame,
+                           (int(particle['x']), int(particle['y'])),
+                           int(particle['size']),
+                           color,
+                           -1)
+                new_particles.append(particle)
+        self.fireball_particles = new_particles[:50]  # 限制粒子数量
+
+        # 绘制火球主体（多层渐变）
+        # 最外层：红色光晕
+        cv2.circle(frame, (cx, cy), size + 15, (0, 0, 100), -1)
+        # 外层：橙色
+        cv2.circle(frame, (cx, cy), size + 8, (0, 80, 200), -1)
+        # 中层：黄色
+        cv2.circle(frame, (cx, cy), size, (0, 150, 255), -1)
+        # 内层：白色核心
+        cv2.circle(frame, (cx, cy), size // 2, (50, 200, 255), -1)
+        # 中心亮点
+        cv2.circle(frame, (cx, cy), size // 4, (255, 255, 255), -1)
+
     def process_frame(self, frame, timestamp_ms):
         """
         处理单帧图像：检测手部 → 绘制可视化 → 识别手势 → 标注结果。
@@ -285,6 +381,9 @@ class GestureRecognizer:
             for i, hand_landmarks in enumerate(result.hand_landmarks):
                 # 在帧上绘制关键点和骨架
                 self._draw_landmarks(frame, hand_landmarks)
+
+                # 在手掌中心绘制火球效果
+                self._draw_fireball(frame, hand_landmarks)
 
                 # 识别当前手势
                 gesture = self.detect_gesture(hand_landmarks)
@@ -320,7 +419,7 @@ class GestureRecognizer:
             print('错误：无法打开摄像头，请检查摄像头是否可用。')
             return
 
-        print('手势识别已启动，按 "q" 键退出程序。')
+        print('手势识别已启动，按 "q" 键退出程序，按 "f" 键切换火球效果。')
 
         # 获取摄像头帧率，若获取失败则默认 30 FPS
         fps = cap.get(cv2.CAP_PROP_FPS)
@@ -359,6 +458,11 @@ class GestureRecognizer:
             elif key == ord('r'):
                 # 按 'r' 键重置帧计数器（避免长时间运行时间戳溢出）
                 frame_count = 0
+            elif key == ord('f'):
+                # 按 'f' 键切换火球效果开关
+                self.fireball_enabled = not self.fireball_enabled
+                status = '开启' if self.fireball_enabled else '关闭'
+                print(f'火球效果已{status}')
 
         # 释放资源
         cap.release()
